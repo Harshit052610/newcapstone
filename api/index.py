@@ -221,7 +221,7 @@ class handler(BaseHTTPRequestHandler):
             # Classification
             prediction = (
                 1
-                if attack_probability >= 0.5
+                if attack_probability >= 0.3
                 else 0
             )
 
