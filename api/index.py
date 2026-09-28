@@ -176,17 +176,17 @@ class handler(BaseHTTPRequestHandler):
 
 
             # Native XGBoost prediction
-          dmatrix = xgb.DMatrix(features)
+dmatrix = xgb.DMatrix(features)
 
-            probability = float(
-                model.predict(dmatrix)[0]
-            )
+probability = float(
+    model.predict(dmatrix)[0]
+)
 
-            prediction = (
-                1
-                if probability >= 0.5
-                else 0
-            )
+prediction = (
+    1
+    if probability >= 0.5
+    else 0
+)
 
 
             self.send_json(
