@@ -142,7 +142,7 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
 
-        if self.path != "/predict":
+        if not self.path.endswith("/predict"):
 
             self.send_json(
                 404,
