@@ -142,17 +142,62 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
 
-        if not self.path.endswith("/predict"):
+    try:
 
-            self.send_json(
-                404,
-                {
-                    "error":
-                    "Endpoint not found"
-                }
+        content_length = int(
+            self.headers.get(
+                "Content-Length",
+                0
             )
+        )
 
-            return
+        body = self.rfile.read(
+            content_length
+        )
+
+        data = json.loads(body)
+
+        features = make_features(data)
+
+        dmatrix = xgb.DMatrix(features)
+
+        probability = float(
+            model.predict(dmatrix)[0]
+        )
+
+        prediction = (
+            1
+            if probability >= 0.5
+            else 0
+        )
+
+        self.send_json(
+            200,
+            {
+                "prediction":
+                    "ATTACK"
+                    if prediction == 1
+                    else "NORMAL",
+
+                "prediction_value":
+                    prediction,
+
+                "confidence":
+                    round(probability, 4),
+
+                "model":
+                    "XGBoost"
+            }
+        )
+
+    except Exception as e:
+
+        self.send_json(
+            500,
+            {
+                "error": str(e)
+            }
+        )
 
 
         try:
