@@ -5,6 +5,10 @@ import numpy as np
 from http.server import BaseHTTPRequestHandler
 
 
+# --------------------------------------------------
+# PATHS
+# --------------------------------------------------
+
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
 MODEL_PATH = os.path.join(
@@ -18,15 +22,25 @@ FEATURES_PATH = os.path.join(
 )
 
 
-# Load native XGBoost model
+# --------------------------------------------------
+# LOAD MODEL
+# --------------------------------------------------
+
 model = xgb.Booster()
 model.load_model(MODEL_PATH)
 
 
-# Load the exact 208 feature names
+# --------------------------------------------------
+# LOAD FEATURE COLUMNS
+# --------------------------------------------------
+
 with open(FEATURES_PATH, "r") as f:
     feature_columns = json.load(f)
 
+
+# --------------------------------------------------
+# FEATURE CREATION
+# --------------------------------------------------
 
 def make_features(data):
 
@@ -38,14 +52,29 @@ def make_features(data):
     # Numerical features
     values = {
         "Round-Trip Time [ms]": data.get(
-            "round_trip_time_ms", 0
+            "round_trip_time_ms",
+            0
         ),
-        "ASN": data.get("asn", 0),
-        "hour": data.get("hour", 0),
-        "day_of_week": data.get("day_of_week", 0),
+
+        "ASN": data.get(
+            "asn",
+            0
+        ),
+
+        "hour": data.get(
+            "hour",
+            0
+        ),
+
+        "day_of_week": data.get(
+            "day_of_week",
+            0
+        ),
+
         "login_success": data.get(
-            "login_success", 0
-        ),
+            "login_success",
+            0
+        )
     }
 
     for name, value in values.items():
@@ -66,9 +95,7 @@ def make_features(data):
         )
     ).lower()
 
-    device_column = (
-        f"Device Type_{device}"
-    )
+    device_column = f"Device Type_{device}"
 
     if device_column in feature_columns:
 
@@ -86,9 +113,7 @@ def make_features(data):
         )
     ).upper()
 
-    country_column = (
-        f"Country_{country}"
-    )
+    country_column = f"Country_{country}"
 
     if country_column in feature_columns:
 
@@ -101,7 +126,16 @@ def make_features(data):
     return features
 
 
+# --------------------------------------------------
+# VERCEL HANDLER
+# --------------------------------------------------
+
 class handler(BaseHTTPRequestHandler):
+
+
+    # --------------------------------------------------
+    # SEND JSON RESPONSE
+    # --------------------------------------------------
 
     def send_json(self, status, data):
 
@@ -126,6 +160,10 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(response)
 
 
+    # --------------------------------------------------
+    # GET
+    # --------------------------------------------------
+
     def do_GET(self):
 
         self.send_json(
@@ -133,75 +171,20 @@ class handler(BaseHTTPRequestHandler):
             {
                 "status": "online",
                 "model": "XGBoost",
-                "features": len(
-                    feature_columns
-                )
+                "features": len(feature_columns)
             }
         )
 
+
+    # --------------------------------------------------
+    # POST
+    # --------------------------------------------------
 
     def do_POST(self):
 
-    try:
-
-        content_length = int(
-            self.headers.get(
-                "Content-Length",
-                0
-            )
-        )
-
-        body = self.rfile.read(
-            content_length
-        )
-
-        data = json.loads(body)
-
-        features = make_features(data)
-
-        dmatrix = xgb.DMatrix(features)
-
-        probability = float(
-            model.predict(dmatrix)[0]
-        )
-
-        prediction = (
-            1
-            if probability >= 0.5
-            else 0
-        )
-
-        self.send_json(
-            200,
-            {
-                "prediction":
-                    "ATTACK"
-                    if prediction == 1
-                    else "NORMAL",
-
-                "prediction_value":
-                    prediction,
-
-                "confidence":
-                    round(probability, 4),
-
-                "model":
-                    "XGBoost"
-            }
-        )
-
-    except Exception as e:
-
-        self.send_json(
-            500,
-            {
-                "error": str(e)
-            }
-        )
-
-
         try:
 
+            # Read request body
             content_length = int(
                 self.headers.get(
                     "Content-Length",
@@ -213,27 +196,45 @@ class handler(BaseHTTPRequestHandler):
                 content_length
             )
 
+            # Parse JSON
             data = json.loads(body)
 
-            features = make_features(
-                data
+
+            # Create 208-feature vector
+            features = make_features(data)
+
+
+            # Create XGBoost input
+            dmatrix = xgb.DMatrix(
+                features
             )
 
 
-            # Native XGBoost prediction
-dmatrix = xgb.DMatrix(features)
-
-probability = float(
-    model.predict(dmatrix)[0]
-)
-
-prediction = (
-    1
-    if probability >= 0.5
-    else 0
-)
+            # Get attack probability
+            attack_probability = float(
+                model.predict(
+                    dmatrix
+                )[0]
+            )
 
 
+            # Classification
+            prediction = (
+                1
+                if attack_probability >= 0.5
+                else 0
+            )
+
+
+            # Confidence of predicted class
+            confidence = (
+                attack_probability
+                if prediction == 1
+                else 1 - attack_probability
+            )
+
+
+            # Return result
             self.send_json(
                 200,
                 {
@@ -245,9 +246,15 @@ prediction = (
                     "prediction_value":
                         prediction,
 
+                    "attack_probability":
+                        round(
+                            attack_probability,
+                            4
+                        ),
+
                     "confidence":
                         round(
-                            probability,
+                            confidence,
                             4
                         ),
 
