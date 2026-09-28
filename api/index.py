@@ -1,83 +1,138 @@
+import json
 import os
-import joblib
-import pandas as pd
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI(title="Security XGBoost API")
-
-# Load model
-MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "xgboost_model.pkl"
-)
-
-FEATURES_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "xgboost_feature_columns.pkl"
-)
-
-model = joblib.load(MODEL_PATH)
-feature_columns = joblib.load(FEATURES_PATH)
+import xgboost as xgb
+import numpy as np
+from http.server import BaseHTTPRequestHandler
 
 
-class SecurityLog(BaseModel):
-    round_trip_time_ms: float = 0
-    asn: int = 0
-    hour: int = 0
-    day_of_week: int = 0
-    login_success: int = 0
-    device_type: str = "Unknown"
-    country: str = "Unknown"
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+
+MODEL_PATH = os.path.join(BASE_DIR, "xgboost_model.json")
+FEATURES_PATH = os.path.join(BASE_DIR, "xgboost_input_features.json")
 
 
-@app.get("/")
-def home():
-    return {
-        "status": "online",
-        "model": "XGBoost",
-        "features": len(feature_columns)
+# Load model once when the server starts
+model = xgb.XGBClassifier()
+model.load_model(MODEL_PATH)
+
+with open(FEATURES_PATH, "r") as f:
+    feature_columns = json.load(f)
+
+
+def make_features(data):
+    """
+    Recreate the 208 features used during training.
+    """
+
+    features = np.zeros((1, len(feature_columns)), dtype=np.float32)
+
+    # Direct numerical features
+    values = {
+        "Round-Trip Time [ms]": data.get("round_trip_time_ms", 0),
+        "ASN": data.get("asn", 0),
+        "hour": data.get("hour", 0),
+        "day_of_week": data.get("day_of_week", 0),
+        "login_success": data.get("login_success", 0),
     }
 
+    for name, value in values.items():
+        if name in feature_columns:
+            features[0, feature_columns.index(name)] = float(value)
 
-@app.post("/predict")
-def predict(log: SecurityLog):
+    # Device Type one-hot encoding
+    device = str(data.get("device_type", "unknown")).lower()
 
-    data = pd.DataFrame([{
-        "Round-Trip Time [ms]": log.round_trip_time_ms,
-        "ASN": log.asn,
-        "hour": log.hour,
-        "day_of_week": log.day_of_week,
-        "login_success": log.login_success,
-        "Device Type": log.device_type,
-        "Country": log.country
-    }])
+    device_column = f"Device Type_{device}"
 
-    # Same one-hot encoding used during training
-    data = pd.get_dummies(
-        data,
-        columns=["Device Type", "Country"],
-        drop_first=True
-    )
+    if device_column in feature_columns:
+        features[0, feature_columns.index(device_column)] = 1
 
-    # Make sure inference has exactly the same 208 columns
-    data = data.reindex(
-        columns=feature_columns,
-        fill_value=0
-    )
+    # Country one-hot encoding
+    country = str(data.get("country", "unknown")).upper()
 
-    data = data.replace([float("inf"), float("-inf")], 0)
-    data = data.fillna(0)
+    country_column = f"Country_{country}"
 
-    prediction = int(model.predict(data)[0])
+    if country_column in feature_columns:
+        features[0, feature_columns.index(country_column)] = 1
 
-    probability = float(
-        model.predict_proba(data)[0][1]
-    )
+    return features
 
-    return {
-        "prediction": "ATTACK" if prediction == 1 else "NORMAL",
-        "prediction_value": prediction,
-        "confidence": round(probability, 4),
-        "model": "XGBoost"
-    }
+
+class handler(BaseHTTPRequestHandler):
+
+    def send_json(self, status, data):
+
+        response = json.dumps(data).encode("utf-8")
+
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+
+        self.wfile.write(response)
+
+    def do_GET(self):
+
+        self.send_json(
+            200,
+            {
+                "status": "online",
+                "model": "XGBoost",
+                "features": len(feature_columns)
+            }
+        )
+
+    def do_POST(self):
+
+        if self.path != "/predict":
+            self.send_json(
+                404,
+                {"error": "Endpoint not found"}
+            )
+            return
+
+        try:
+
+            content_length = int(
+                self.headers.get("Content-Length", 0)
+            )
+
+            body = self.rfile.read(content_length)
+
+            data = json.loads(body)
+
+            features = make_features(data)
+
+            # XGBoost prediction
+            prediction = int(
+                model.predict(features)[0]
+            )
+
+            probabilities = model.predict_proba(features)[0]
+
+            attack_probability = float(probabilities[1])
+
+            result = {
+                "prediction": (
+                    "ATTACK"
+                    if prediction == 1
+                    else "NORMAL"
+                ),
+                "prediction_value": prediction,
+                "confidence": round(
+                    attack_probability,
+                    4
+                ),
+                "model": "XGBoost"
+            }
+
+            self.send_json(200, result)
+
+        except Exception as e:
+
+            self.send_json(
+                500,
+                {
+                    "error": str(e)
+                }
+            )
