@@ -176,10 +176,7 @@ class handler(BaseHTTPRequestHandler):
 
 
             # Native XGBoost prediction
-            dmatrix = xgb.DMatrix(
-                features,
-                feature_names=feature_columns
-            )
+          dmatrix = xgb.DMatrix(features)
 
             probability = float(
                 model.predict(dmatrix)[0]
